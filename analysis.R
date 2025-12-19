@@ -70,7 +70,7 @@ all_df %>%
   ggtitle('Observed vs predicted cases 2023-2025')+
   ylim(0,NA) +
   facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')+
-  ggtitle('Top models with no lag')
+  ggtitle('Top districts with no lag')
 
 cor.obs.pred.top9.v2 <- cor.obs.pred %>%
   mutate(rank2= row_number() ) 
