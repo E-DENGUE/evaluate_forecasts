@@ -47,7 +47,7 @@ cor.obs.pred <- all_df %>%
              unlagged_better = if_else(cor.obs.pred>cor.obs.pred.lag1 & cor.obs.pred>cor.obs.pred.lag2 ,1,0)
              ) %>%
   arrange(-cor.obs.pred) %>%
-  mutate(rank1= row_number() ,
+  mutate(
          fcode = gsub('CA_MAU', 'CAM_MAU', fcode),
          fcode0 = gsub('_DISTRICT', '', fcode),
          fcode0 = gsub('_CITY', '', fcode0),
@@ -57,58 +57,47 @@ cor.obs.pred <- all_df %>%
   left_join(district_characters, by='fcode0')
 
 
+cor.obs.pred.top9 <- cor.obs.pred %>%
+  filter(unlagged_better==1) %>%
+  mutate(rank1= row_number() ) 
+  
 all_df %>%
-  left_join(cor.obs.pred, by='fcode') %>%
+    left_join(cor.obs.pred.top9, by='fcode') %>%
   filter(Forecast_horizon == '3 months' & rank1<=9) %>%
   ggplot()+
   geom_point(aes(x=pred_date,y=obs_dengue_cases)) +
   geom_line(aes(x=pred_date, y=pred_cases))+
   ggtitle('Observed vs predicted cases 2023-2025')+
   ylim(0,NA) +
-  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')
+  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')+
+  ggtitle('Top models with no lag')
+
+cor.obs.pred.top9.v2 <- cor.obs.pred %>%
+  mutate(rank2= row_number() ) 
 
 all_df %>%
-  left_join(cor.obs.pred, by='fcode') %>%
-  filter(Forecast_horizon == '3 months' & rank1>9) %>%
+  left_join(cor.obs.pred.top9.v2, by='fcode') %>%
+  filter(Forecast_horizon == '3 months' & rank1<=9) %>%
   ggplot()+
   geom_point(aes(x=pred_date,y=obs_dengue_cases)) +
   geom_line(aes(x=pred_date, y=pred_cases))+
   ggtitle('Observed vs predicted cases 2023-2025')+
   ylim(0,NA) +
-  facet_wrap(~fcode,scales='free_y')
+  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')+
+  ggtitle('Top models with or without lagged prediction (not as good)')
+
 
 
 all_df %>%
   left_join(cor.obs.pred, by='fcode') %>%
-  filter(Forecast_horizon == '3 months' & cor.obs.pred >=0.78) %>%
+  filter(Forecast_horizon == '3 months' & cor.obs.pred <0.06) %>%
   ggplot()+
   geom_point(aes(x=pred_date,y=obs_dengue_cases)) +
   geom_line(aes(x=pred_date, y=pred_cases))+
   ggtitle('Observed vs predicted cases 2023-2025')+
   ylim(0,NA) +
-  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')
-
-
-all_df %>%
-  left_join(cor.obs.pred, by='fcode') %>%
-  filter(Forecast_horizon == '3 months' & cor.obs.pred >=0.6164 & unlagged_better==1) %>%
-ggplot()+
-  geom_point(aes(x=pred_date,y=obs_dengue_cases)) +
-  geom_line(aes(x=pred_date, y=pred_cases))+
-  ggtitle('Observed vs predicted cases 2023-2025')+
-  ylim(0,NA) +
-  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')
-
-
-all_df %>%
-  left_join(cor.obs.pred, by='fcode') %>%
-  filter(Forecast_horizon == '3 months' & cor.obs.pred <0.235) %>%
-  ggplot()+
-  geom_point(aes(x=pred_date,y=obs_dengue_cases)) +
-  geom_line(aes(x=pred_date, y=pred_cases))+
-  ggtitle('Observed vs predicted cases 2023-2025')+
-  ylim(0,NA) +
-  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')
+  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')+
+  ggtitle('Worst models')
 
 
 View(cor.obs.pred)
