@@ -8,7 +8,30 @@ all_df <- lapply(all.files,read_csv) %>%
   bind_rows() %>%
   mutate(fcode = gsub('ED_','', fcode))
 
-district_characters <- readRDS('../Dengue_District_HPC/Data/CONFIDENTIAL/Updated_full_data_with_new_boundaries_all_factors_cleaned.rds') %>%
+#claude generated cluster based on 20024-2022
+clusters_new <- read_csv('./raw/claude_province_cluster_assignments.csv') %>%
+  rename(fcode0 = District) %>%
+  mutate(
+    fcode0 = gsub('CA_MAU', 'CAM_MAU', fcode0),
+    fcode0 = gsub('_DISTRICT', '', fcode0),
+    fcode0 = gsub('_CITY', '', fcode0),
+    fcode0 = gsub('_URBAN', '', fcode0),
+    fcode0 = gsub('_TOWN', '', fcode0),
+    fcode0 = gsub('THANH_BEN_TRE', 'THANH', fcode0),
+    fcode0 = gsub('TIEN_GIANG_CHAU_THANH_TIEN_GIANG','TIEN_GIANG_CHAU_THANH', fcode0),
+    fcode0 = gsub('HAU_GIANG_CHAU_THANH_HAU_GIANG','HAU_GIANG_CHAU_THANH', fcode0),
+    fcode0 = gsub('TRA_VINH_CHAU_THANH_TRA_VINH','TRA_VINH_CHAU_THANH', fcode0),
+    fcode0 = gsub('LONG_AN_CHAU_THANH_LONG_AN', 'LONG_AN_CHAU_THANH', fcode0),
+    
+    fcode0 = gsub('AN_GIANG_CHAU_THANH_AN_GIANG','AN_GIANG_CHAU_THANH', fcode0),
+    fcode0 = gsub('AN_GIANG_PHU_TAN_AN_GIANG', 'AN_GIANG_PHU_TAN', fcode0),
+    fcode0 = gsub('DONG_THAP_CHAU_THANH_DONG_THAP','DONG_THAP_CHAU_THANH_DONG_THAP', fcode0),
+    fcode0 = gsub('CAM_MAU_PHU_TAN_CAM_MAU','CAM_MAU_PHU_TAN', fcode0),
+    fcode0 = gsub('DONG_THAP_CHAU_THANH_DONG_THAP','DONG_THAP_CHAU_THANH', fcode0)
+    
+  ) 
+
+district_characteristics <- readRDS('../Dengue_District_HPC/Data/CONFIDENTIAL/Updated_full_data_with_new_boundaries_all_factors_cleaned.rds') %>%
   mutate(fcode0 = paste(province, district),
          fcode0 = gsub(' ','_',fcode0),
          inc = m_DHF_cases/pop*100000
@@ -54,7 +77,8 @@ cor.obs.pred <- all_df %>%
          fcode0 = gsub('_URBAN', '', fcode0),
          fcode0 = gsub('_TOWN', '', fcode0)
          ) %>%
-  left_join(district_characters, by='fcode0')
+  left_join(district_characteristics, by='fcode0') %>%
+  left_join(clusters_new, by='fcode0')
 
 
 cor.obs.pred.top9 <- cor.obs.pred %>%
@@ -71,6 +95,7 @@ all_df %>%
   ylim(0,NA) +
   facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')+
   ggtitle('Top districts with no lag')
+
 
 cor.obs.pred.top9.v2 <- cor.obs.pred %>%
   mutate(rank2= row_number() ) 
@@ -99,6 +124,23 @@ all_df %>%
   facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')+
   ggtitle('Worst models')
 
+#Vinh Long province
+all_df %>%
+  filter(Forecast_horizon == '3 months' & grepl('VINH_LONG', fcode) & pred_date>='2023-01-01') %>%
+  ggplot()+
+  geom_point(aes(x=pred_date,y=obs_dengue_cases)) +
+  geom_line(aes(x=pred_date, y=pred_cases))+
+  ggtitle('Observed vs predicted cases 2023-2025')+
+  ylim(0,NA) +
+  facet_wrap(~fcode, nrow=3,ncol=3, scales='free_y')+
+  ggtitle('Top districts with no lag')
+
+
+cor.obs.pred %>%
+  mutate(Cluster=as.factor(Cluster)) %>%
+ggplot()+
+  geom_violin(aes(x=Cluster, y=cor.obs.pred, color=unlagged_better))
+
 
 View(cor.obs.pred)
 
@@ -120,4 +162,13 @@ p3
 #are there factors associated with better correlation between observed and predicted
 cor(cor.obs.pred[,c('cor.obs.pred','cor.obs.pred.lag2','inc','m_DHF_cases','Population_density','NetImmigration_Rate','Hygienic_Water_Access','Monthly_Average_Income_Percapita')], use='pairwise.complete.obs')
 
+
+
+ts_mat <- district_characteristics <- readRDS('../Dengue_District_HPC/Data/CONFIDENTIAL/Updated_full_data_with_new_boundaries_all_factors_cleaned.rds') %>%
+  mutate(fcode0 = paste(province, district),
+         fcode0 = gsub(' ','_',fcode0),
+         inc = m_DHF_cases/pop*100000
+  ) %>%
+  pivot_wider(id_cols=c(date), values_from=inc, names_from=fcode0)
     
+write_csv(ts_mat, './raw/ts_mat.csv')
