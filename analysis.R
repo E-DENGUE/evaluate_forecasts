@@ -188,80 +188,131 @@ unique(cor.obs.pred.top9$fcode)
   in.ds3$log_resid <- log((in.ds3$obs_dengue_cases+1) / (in.ds3$pred1+1) )
   in.ds3$cumresid <- cumsum(in.ds3$log_resid)
   
-in.ds <- arrow::read_parquet('../baseline_evaluation/data/raw.parquet') %>%
-  mutate(fcode = gsub('ED_', '', fcode)) %>%
-  filter( fcode == 'HAU_GIANG_CHAU_THANH_DISTRICT') %>%
-  mutate(date = as.Date(paste(year, month, '01', sep='-')) ) %>%
-  arrange(fcode, date) %>%
+  
+single_district_test <- function(select.district){  
+    in.ds <- arrow::read_parquet('../baseline_evaluation/data/raw.parquet') %>%
+      mutate(fcode = gsub('ED_', '', fcode)) %>%
+      filter( fcode == select.district) %>%
+      mutate(date = as.Date(paste(year, month, '01', sep='-')) ) %>%
+      arrange(fcode, date) %>%
+      group_by(fcode) %>%
+      mutate(index = row_number(),
+             sin12 = sin(2*pi*index/12),
+             cos12 = cos(2*pi*index/12)
+      ) %>%
+      ungroup()
+    
+    p2 <- ggplot(in.ds) +
+      geom_line(aes(x=date, y=obs_dengue_cases)) 
+    p2
+    
+    
+    in.ds2 <- in.ds %>%
+      filter(date>='2004-01-01')
+    
+    mod1 <- glm(obs_dengue_cases~ sin12+cos12 , family='poisson', data=in.ds2 )
+    
+    in.ds2$pred1 <- predict(mod1, type='response')
+    in.ds2$log_resid <- log((in.ds2$obs_dengue_cases+1) / (in.ds2$pred1+1) )
+    in.ds2$cumresid <- cumsum(in.ds2$log_resid)
+    
+     p2 +
+       geom_line(data=in.ds2, aes(x=date, y=pred1, color='red'))
+     
+    
+     
+     
+     in.ds3 <- in.ds2 %>%
+      # filter(date<='2015-01-01' & date<='2025-01-01') %>%
+       arrange(date) %>%
+       mutate(t=row_number(),
+              t2=2,
+              max_temp_c = t2m_max -273.15,
+              min_temp_c = t2m_min - 273.15,
+              optimal_temp = if_else(max_temp_c<=32 & min_temp_c>=24,1,0),
+      
+              f_min = exp(-((pmax(0, 26 - min_temp_c))^2) / (2 * 2^2)),
+              f_max = exp(-((pmax(0, max_temp_c - 30))^2) / (2 * 2^2)),
+              
+              thermal_suitability  = f_min * f_max,  
+              yearN = year - min(year, na.rm=T) + 1,
+              
+              climate_scale = scale(thermal_suitability),
+              climate_scale_lag3 = lag(climate_scale,3),
+              )
+     
+     form1 <- as.formula( 'obs_dengue_cases    ~ 1 +
+         climate_scale   + 
+         sin12 + cos12+                       # fixed effects (optional)
+         f(t, model = "ar1", constr=T)+
+         f(t2, model = "iid", constr=T)+
+    
+              f(yearN, model="rw2", constr=T)            
+                          '
+                          )
+     
+     fit_inla <- INLA::inla(form1,
+       data = in.ds3,
+          family = "poisson" ,
+       control.compute = list(dic = TRUE, waic = TRUE)
+       
+     )
+     
+     mod.summary <-summary(fit_inla)
+     return(mod.summary)
+}
+ 
+
+districts_test <- unique(all_df$fcode)
+all.res <- lapply(districts_test,single_district_test)
+
+beta1 <- sapply(all.res, function(x) x$fixed['climate_scale','mean'] )
+
+beta.climate <- cbind.data.frame('fcode'=districts_test, 'beta1'=beta1)
+
+MDR_NEW <- sf::st_read(dsn = "./shape/MDR_NEW_Boundaries_Final.shp") 
+MDR_NEW$fcode = paste(MDR_NEW$NAME_En, MDR_NEW$VARNAME, MDR_NEW$ENGTYPE, sep='_')
+MDR_NEW$fcode = toupper(MDR_NEW$fcode )
+MDR_NEW$fcode  = gsub(' ', '_', MDR_NEW$fcode )
+MDR_NEW$fcode  = gsub('CITY_CITY', 'CITY', MDR_NEW$fcode )
+MDR_NEW$fcode  = gsub('CAM_', 'CA_', MDR_NEW$fcode )
+
+
+covars <-    in.ds <- arrow::read_parquet('../baseline_evaluation/data/raw.parquet') %>%
+  mutate(fcode = gsub('ED_', '', fcode),
+         max_temp_c = t2m_max -273.15,
+         min_temp_c = t2m_min - 273.15,
+         optimal_temp = if_else(max_temp_c<=32 & min_temp_c>=24,1,0),
+         
+         f_min = exp(-((pmax(0, 26 - min_temp_c))^2) / (2 * 2^2)),
+         f_max = exp(-((pmax(0, max_temp_c - 30))^2) / (2 * 2^2)),
+         
+         thermal_suitability  = f_min * f_max  ) %>%
   group_by(fcode) %>%
-  mutate(index = row_number(),
-         sin12 = sin(2*pi*index/12),
-         cos12 = cos(2*pi*index/12)
-  ) %>%
-  ungroup()
+  summarize(pop_density = mean(pop_density),
+            min_temp = mean(t2m_min),
+            max_temp = mean(t2m_max),
+            thermal_suitability= mean(thermal_suitability)
+            )
 
-p2 <- ggplot(in.ds) +
-  geom_line(aes(x=date, y=obs_dengue_cases)) 
-p2
+comp_df <- MDR_NEW %>%
+  full_join(beta.climate,by=c('fcode')) %>%
+  left_join(covars, by=c('fcode')) 
 
+comp_df%>%
+  ggplot() +
+  geom_sf(aes(fill = beta1)) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0
+  )+
+  theme_minimal()
+p3
 
-in.ds2 <- in.ds %>%
-  filter(date>='2004-01-01')
-
-mod1 <- glm(obs_dengue_cases~ sin12+cos12 , family='poisson', data=in.ds2 )
-
-in.ds2$pred1 <- predict(mod1, type='response')
-in.ds2$log_resid <- log((in.ds2$obs_dengue_cases+1) / (in.ds2$pred1+1) )
-in.ds2$cumresid <- cumsum(in.ds2$log_resid)
-
- p2 +
-   geom_line(data=in.ds2, aes(x=date, y=pred1, color='red'))
- 
-
- 
- 
- in.ds3 <- in.ds2 %>%
-  # filter(date<='2015-01-01' & date<='2025-01-01') %>%
-   arrange(date) %>%
-   mutate(t=row_number(),
-          t2=2,
-          max_temp_c = t2m_max -273.15,
-          min_temp_c = t2m_min - 273.15,
-          optimal_temp = if_else(max_temp_c<=32 & min_temp_c>=24,1,0),
-  
-          f_min = exp(-((pmax(0, 26 - min_temp_c))^2) / (2 * 2^2)),
-          f_max = exp(-((pmax(0, max_temp_c - 30))^2) / (2 * 2^2)),
-          
-          thermal_suitability  = f_min * f_max,  
-          yearN = year - min(year, na.rm=T) + 1,
-          
-          climate_scale = scale(thermal_suitability),
-          climate_scale_lag3 = lag(climate_scale,3),
-          )
- 
- form1 <- as.formula( 'obs_dengue_cases    ~ 1 +
-     climate_scale   + 
-     sin12 + cos12+                       # fixed effects (optional)
-     f(t, model = "ar1", constr=T)+
-     f(t2, model = "iid", constr=T)+
-
-          f(yearN, model="rw2", constr=T)            
-                      '
-                      )
- 
- fit_inla <- INLA::inla(form1,
-   data = in.ds3,
-      family = "poisson" ,
-   control.compute = list(dic = TRUE, waic = TRUE)
-   
- )
- 
- summary(fit_inla)
- 
-  plot(in.ds3$date, in.ds3$cumresid)
-  
-  plot(in.ds3$date, scale(in.ds3$obs_dengue_cases), type='l')
-  points(in.ds3$date, in.ds3$climate_scale_lag3, type='l', col='red')
+ggplot(comp_df)+
+  geom_point(aes(y=beta1, x=thermal_suitability))
   # 
  # p3 <- ggplot(in.ds3) +
  #   geom_line(aes(x=date, y=obs_dengue_cases)) +
