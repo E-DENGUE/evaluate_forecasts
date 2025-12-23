@@ -184,15 +184,16 @@ worst_districts <- all_df %>%
 
 unique(cor.obs.pred.top9$fcode)
 
+  in.ds3$pred <- exp(fit_inla$summary.linear.predictor$mean)
+  in.ds3$log_resid <- log((in.ds3$obs_dengue_cases+1) / (in.ds3$pred1+1) )
+  in.ds3$cumresid <- cumsum(in.ds3$log_resid)
+  
 in.ds <- arrow::read_parquet('../baseline_evaluation/data/raw.parquet') %>%
   mutate(fcode = gsub('ED_', '', fcode)) %>%
-  filter( grepl('AN_GIANG',fcode)) %>%
+  filter( fcode == 'HAU_GIANG_CHAU_THANH_DISTRICT') %>%
   mutate(date = as.Date(paste(year, month, '01', sep='-')) ) %>%
-  group_by(date) %>%
-  summarize(obs_dengue_cases = sum(obs_dengue_cases),
-            t2m_min = mean(t2m_min)) %>%
-  arrange( date) %>%
-  #group_by(fcode) %>%
+  arrange(fcode, date) %>%
+  group_by(fcode) %>%
   mutate(index = row_number(),
          sin12 = sin(2*pi*index/12),
          cos12 = cos(2*pi*index/12)
@@ -200,8 +201,7 @@ in.ds <- arrow::read_parquet('../baseline_evaluation/data/raw.parquet') %>%
   ungroup()
 
 p2 <- ggplot(in.ds) +
-  geom_line(aes(x=date, y=obs_dengue_cases)) +
-  ggtitle('KIEN_GIANG_HA_TIEN_CITY')
+  geom_line(aes(x=date, y=obs_dengue_cases)) 
 p2
 
 
@@ -211,29 +211,37 @@ in.ds2 <- in.ds %>%
 mod1 <- glm(obs_dengue_cases~ sin12+cos12 , family='poisson', data=in.ds2 )
 
 in.ds2$pred1 <- predict(mod1, type='response')
-in.ds2$resid = in.ds2$obs_dengue_cases/in.ds2$pred1
+in.ds2$log_resid <- log((in.ds2$obs_dengue_cases+1) / (in.ds2$pred1+1) )
+in.ds2$cumresid <- cumsum(in.ds2$log_resid)
 
  p2 +
    geom_line(data=in.ds2, aes(x=date, y=pred1, color='red'))
  
+
  
- p2 <- ggplot(in.ds2) +
-   geom_line(aes(x=date, y=resid))
- p2
  
  in.ds3 <- in.ds2 %>%
-   filter(date<='2015-01-01') %>%
+  # filter(date<='2015-01-01' & date<='2025-01-01') %>%
    arrange(date) %>%
    mutate(t=row_number(),
           t2=2,
-          climate_scale = scale(t2m_min),
+          max_temp_c = t2m_max -273.15,
+          min_temp_c = t2m_min - 273.15,
+          optimal_temp = if_else(max_temp_c<=32 & min_temp_c>=24,1,0),
+  
+          f_min = exp(-((pmax(0, 26 - min_temp_c))^2) / (2 * 2^2)),
+          f_max = exp(-((pmax(0, max_temp_c - 30))^2) / (2 * 2^2)),
+          
+          thermal_suitability  = f_min * f_max,  
+          yearN = year - min(year, na.rm=T) + 1,
+          
+          climate_scale = scale(thermal_suitability),
           climate_scale_lag3 = lag(climate_scale,3),
-          year=year(date),
-          yearN = year - min(year, na.rm=T) + 1
           )
  
  form1 <- as.formula( 'obs_dengue_cases    ~ 1 +
-     climate_scale_lag3  +  sin12 + cos12+                       # fixed effects (optional)
+     climate_scale   + 
+     sin12 + cos12+                       # fixed effects (optional)
      f(t, model = "ar1", constr=T)+
      f(t2, model = "iid", constr=T)+
 
@@ -243,15 +251,20 @@ in.ds2$resid = in.ds2$obs_dengue_cases/in.ds2$pred1
  
  fit_inla <- INLA::inla(form1,
    data = in.ds3,
-      family = "poisson" 
+      family = "poisson" ,
+   control.compute = list(dic = TRUE, waic = TRUE)
+   
  )
  
  summary(fit_inla)
  
- in.ds3$pred <- exp(fit_inla$summary.linear.predictor$mean)
- 
- p3 <- ggplot(in.ds3) +
-   geom_line(aes(x=date, y=obs_dengue_cases)) +
-   geom_line(aes(x=date, y=pred, col='red')) 
- p3
- 
+  plot(in.ds3$date, in.ds3$cumresid)
+  
+  plot(in.ds3$date, scale(in.ds3$obs_dengue_cases), type='l')
+  points(in.ds3$date, in.ds3$climate_scale_lag3, type='l', col='red')
+  # 
+ # p3 <- ggplot(in.ds3) +
+ #   geom_line(aes(x=date, y=obs_dengue_cases)) +
+ #   geom_line(aes(x=date, y=pred, col='red')) 
+ # p3
+ # 
