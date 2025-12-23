@@ -172,3 +172,86 @@ ts_mat <- district_characteristics <- readRDS('../Dengue_District_HPC/Data/CONFI
   pivot_wider(id_cols=c(date), values_from=inc, names_from=fcode0)
     
 write_csv(ts_mat, './raw/ts_mat.csv')
+
+
+
+## Try some alternative models for poor districts
+worst_districts <- all_df %>%
+  left_join(cor.obs.pred, by='fcode') %>%
+  filter(Forecast_horizon == '3 months' & cor.obs.pred <0.06) %>%
+  pull(fcode) %>%
+  unique()
+
+unique(cor.obs.pred.top9$fcode)
+
+in.ds <- arrow::read_parquet('../baseline_evaluation/data/raw.parquet') %>%
+  mutate(fcode = gsub('ED_', '', fcode)) %>%
+  filter( grepl('AN_GIANG',fcode)) %>%
+  mutate(date = as.Date(paste(year, month, '01', sep='-')) ) %>%
+  group_by(date) %>%
+  summarize(obs_dengue_cases = sum(obs_dengue_cases),
+            t2m_min = mean(t2m_min)) %>%
+  arrange( date) %>%
+  #group_by(fcode) %>%
+  mutate(index = row_number(),
+         sin12 = sin(2*pi*index/12),
+         cos12 = cos(2*pi*index/12)
+  ) %>%
+  ungroup()
+
+p2 <- ggplot(in.ds) +
+  geom_line(aes(x=date, y=obs_dengue_cases)) +
+  ggtitle('KIEN_GIANG_HA_TIEN_CITY')
+p2
+
+
+in.ds2 <- in.ds %>%
+  filter(date>='2004-01-01')
+
+mod1 <- glm(obs_dengue_cases~ sin12+cos12 , family='poisson', data=in.ds2 )
+
+in.ds2$pred1 <- predict(mod1, type='response')
+in.ds2$resid = in.ds2$obs_dengue_cases/in.ds2$pred1
+
+ p2 +
+   geom_line(data=in.ds2, aes(x=date, y=pred1, color='red'))
+ 
+ 
+ p2 <- ggplot(in.ds2) +
+   geom_line(aes(x=date, y=resid))
+ p2
+ 
+ in.ds3 <- in.ds2 %>%
+   filter(date<='2015-01-01') %>%
+   arrange(date) %>%
+   mutate(t=row_number(),
+          t2=2,
+          climate_scale = scale(t2m_min),
+          climate_scale_lag3 = lag(climate_scale,3),
+          year=year(date),
+          yearN = year - min(year, na.rm=T) + 1
+          )
+ 
+ form1 <- as.formula( 'obs_dengue_cases    ~ 1 +
+     climate_scale_lag3  +  sin12 + cos12+                       # fixed effects (optional)
+     f(t, model = "ar1", constr=T)+
+     f(t2, model = "iid", constr=T)+
+
+          f(yearN, model="rw2", constr=T)            
+                      '
+                      )
+ 
+ fit_inla <- INLA::inla(form1,
+   data = in.ds3,
+      family = "poisson" 
+ )
+ 
+ summary(fit_inla)
+ 
+ in.ds3$pred <- exp(fit_inla$summary.linear.predictor$mean)
+ 
+ p3 <- ggplot(in.ds3) +
+   geom_line(aes(x=date, y=obs_dengue_cases)) +
+   geom_line(aes(x=date, y=pred, col='red')) 
+ p3
+ 
