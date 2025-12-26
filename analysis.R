@@ -242,7 +242,7 @@ single_district_test <- function(select.district){
               )
      
      form1 <- as.formula( 'obs_dengue_cases    ~ 1 +
-         climate_scale   + 
+         climate_scale_lag3   + 
          sin12 + cos12+                       # fixed effects (optional)
          f(t, model = "ar1", constr=T)+
          f(t2, model = "iid", constr=T)+
@@ -266,7 +266,7 @@ single_district_test <- function(select.district){
 districts_test <- unique(all_df$fcode)
 all.res <- lapply(districts_test,single_district_test)
 
-beta1 <- sapply(all.res, function(x) x$fixed['climate_scale','mean'] )
+beta1 <- sapply(all.res, function(x) x$fixed['climate_scale_lag3','mean'] )
 
 beta.climate <- cbind.data.frame('fcode'=districts_test, 'beta1'=beta1)
 
